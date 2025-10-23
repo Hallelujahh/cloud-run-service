@@ -1,0 +1,33 @@
+substitutions:
+  _REGION: asia-northeast1
+  _SERVICE: hello-cr
+  _REPO: cr-hello         # Artifact Registry 仓库名(稍后创建)
+  _IMAGE: hello           # 镜像名(自定义即可)
+
+steps:
+  - name: "gcr.io/cloud-builders/docker"
+    args: [
+      "build","-t",
+      "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_IMAGE}:$SHORT_SHA",
+      "."
+    ]
+
+  - name: "gcr.io/cloud-builders/docker"
+    args: [
+      "push",
+      "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_IMAGE}:$SHORT_SHA"
+    ]
+
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    entrypoint: gcloud
+    args: [
+      "run","deploy","${_SERVICE}",
+      "--image","${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_IMAGE}:$SHORT_SHA",
+      "--region","${_REGION}",
+      "--allow-unauthenticated",
+      "--platform","managed",
+      "--port","8080"
+    ]
+
+images:
+  - "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_IMAGE}:$SHORT_SHA"
