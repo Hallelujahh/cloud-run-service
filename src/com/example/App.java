@@ -11,26 +11,36 @@ import java.nio.charset.StandardCharsets;
 public class App {
     public static void main(String[] args) throws Exception {
         int port = 8080;
-        String portEnv = System.getenv("PORT"); // Cloud Run 注入
+        String portEnv = System.getenv("PORT");
         if (portEnv != null && !portEnv.isBlank()) {
             try { port = Integer.parseInt(portEnv); } catch (NumberFormatException ignored) {}
         }
 
         HttpServer server = HttpServer.create(new InetSocketAddress("0.0.0.0", port), 0);
 
-        // 只注册 "/"，在内部根据 path 分发
         server.createContext("/", (HttpExchange ex) -> {
-            String path = ex.getRequestURI().getPath(); // 例如 "/", "/healthz"
+            // 记录一下收到的请求，便于 Cloud Run 日志里排查
+            String method = ex.getRequestMethod();
+            String rawPath = ex.getRequestURI().getPath();
+
+            // 规范化：去掉非根路径的尾斜杠，统一小写（/HealthZ 也能命中）
+            String path = rawPath;
+            if (path.endsWith("/") && path.length() > 1) path = path.substring(0, path.length() - 1);
+            path = path.toLowerCase();
+
+            // HEAD 请求按 GET 处理但不返回 body
+            boolean head = "HEAD".equalsIgnoreCase(method);
+
             switch (path) {
                 case "/":
-                    sendText(ex, 200, "Hello from Cloud Run (no Maven)!");
+                    sendText(ex, 200, "Hello from Cloud Run (no Maven)!", head);
                     break;
                 case "/healthz":
-                    // 可加一些快速自检逻辑
-                    sendText(ex, 200, "ok");
+                    // 允许 /healthz 与 /healthz/ 都命中；HEAD/GET 都返回 200
+                    sendText(ex, 200, "ok", head);
                     break;
                 default:
-                    sendText(ex, 404, "not found: " + path);
+                    sendText(ex, 404, "not found: " + rawPath, head);
             }
         });
 
@@ -38,10 +48,15 @@ public class App {
         server.start();
     }
 
-    private static void sendText(HttpExchange ex, int status, String body) throws IOException {
+    private static void sendText(HttpExchange ex, int status, String body, boolean headOnly) throws IOException {
         byte[] resp = body.getBytes(StandardCharsets.UTF_8);
         ex.getResponseHeaders().set("Content-Type", "text/plain; charset=UTF-8");
-        ex.getResponseHeaders().set("Cache-Control", "no-store"); // 避免中间层缓存干扰
+        ex.getResponseHeaders().set("Cache-Control", "no-store");
+        if (headOnly) {
+            ex.sendResponseHeaders(status, -1); // HEAD：只发响应头
+            ex.close();
+            return;
+        }
         ex.sendResponseHeaders(status, resp.length);
         try (OutputStream os = ex.getResponseBody()) { os.write(resp); }
     }
